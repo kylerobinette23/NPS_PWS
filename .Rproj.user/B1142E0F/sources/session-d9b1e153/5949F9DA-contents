@@ -1,0 +1,403 @@
+---
+title: "NPS_PWS"
+format: html
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+```{r}
+library(leaflet)
+library(dplyr)
+library(sf)
+library(htmltools)
+library(readr)
+library(sf)
+library(flextable)
+library(purrr)
+library(ggplot2)
+library(scales) 
+library(ggrepel)
+
+```
+
+# Sustaining the Unseen: Prioritizing Water Infrastructure in America's National Parks
+
+## 🌍 Why This Project Matters
+
+Our National Parks are global treasures, welcoming over 300 million
+visitors annually alongside thousands of resident park rangers and
+support staff. While visitors marvel at towering redwoods or dramatic
+canyons, an invisible, highly complex web of **Public Water Systems
+(PWS)** quietly ensures public health, safety, and operational
+continuity.
+
+Managing water in these landscapes is uniquely challenging:
+**Infrastructure Age & Isolation:** Many park systems operate in remote
+areas, far from municipal grids, relying on localized infrastructure
+that is difficult to maintain and monitor. **Climate Vulnerability:**
+From mountain springs drying up to surface water reservoirs suffering
+from algal blooms and wildfire-related sediment runoff, climate change
+is actively threatening these vital resources. **Regulatory Oversight:**
+Because these systems serve the public, they must strictly comply with
+the EPA’s Safe Drinking Water Act (SDWA).
+
+This project bridges the gap between raw federal environmental databases
+and actionable asset management. By linking the **National Park Service
+Water Supply Database (WSD)** with the **EPA's Safe Drinking Water
+Information System (SDWIS)**, we can isolate, visualize, and prioritize
+the water systems that are most critical to park operations and public
+safety.
+
+------------------------------------------------------------------------
+
+## 🎯 Identifying the "High-Priority" Systems
+
+To effectively allocate resources, we categorize and prioritize these
+water systems based on three primary dimensions:
+
+### 1. Scale of Human Impact (Population Served)
+
+Not all water systems are built equal. We utilize an 11-category
+population scale to identify systems serving massive visitor hubs vs.
+small backcountry stations: **High-Impact Systems (Class 5 to 11):**
+Systems serving over 3,300 to upwards of 1 million people (such as
+primary hubs in Yosemite, Grand Canyon, or Yellowstone). A single system
+failure here represents a massive public health risk and potential
+park-wide closure. **Localized Systems (Class 1 to 4):** Systems serving
+under 3,300 people, often supporting remote ranger stations or
+campgrounds. While lower in raw numbers, these systems frequently lack
+backup sources, making them highly vulnerable to localized
+contamination.
+
+### 2. Physical Water Source Vulnerability
+
+The source of a water system dictates its environmental risk profile:
+**Surface Water (SW) / Groundwater Under Direct Influence (GWUDI):**
+Highly sensitive to immediate climate impacts, such as droughts, flash
+floods, agricultural runoff, and surface contamination. **Groundwater
+(GW):** Generally more stable, but highly susceptible to long-term
+geological contaminants (like arsenic) or persistent chemical
+infiltration (like PFAS).
+
+### 3. Historical Compliance & Risk (SDWA Violations)
+
+By analyzing historical violations, we can highlight systems with a
+track record of compliance issues—particularly those sensitive to
+climate stressors—providing park managers with a data-driven "early
+warning" system.
+
+------------------------------------------------------------------------
+
+## 🗺️ Interactive System Explorer
+
+Use the map below to explore public water systems across the National
+Park network. **Filter** layers using the top-right control to toggle
+park boundaries and water system classifications. **Hover** over any
+point to view the system name, exact population served, and size
+classification. **Click** on any park boundary to identify the official
+administrative unit name.
+
+```{r}
+# Load the tabular metadata (if needed for other plots, otherwise loaded here)
+wsd_sdwa <- read_csv("data/wsd_sdwa_clean.csv", show_col_types = FALSE)
+
+# 1. Load your local pre-simplified NPS park boundaries
+nps_boundaries <- sf::st_read("data/nps_boundaries.geojson", quiet = TRUE) %>% 
+  sf::st_transform(crs = 4326) 
+
+# 2. Load the clean spatial data we exported
+map_data <- sf::st_read("data/map_data.geojson", quiet = TRUE) %>% 
+  sf::st_transform(crs = 4326)
+
+# Define clean labels for the 11 population scales
+pop_labels <- c(
+  "<=100", "101-500", "501-1,000", "1,001-3,300", "3,301-10,000", 
+  "10,001-50,000", "50,001-100,000", "100,001-250,000", 
+  "250,001-500,000", "500,001-1,000,000", ">1,000,000"
+)
+
+# 3. Add back the hover text dynamically using your existing 'classification' column
+map_data <- map_data %>%
+  mutate(
+    # Re-establish the factor levels so the legend stays in perfect numerical order
+    POP_CAT_11_CODE = factor(POP_CAT_11_CODE, levels = as.character(1:11)),
+    
+    # Create the HTML list column on the fly
+    hover_text = lapply(paste0(
+      "<strong>System Name:</strong> ", PWS_NAME, "<br/>",
+      "<strong>Classification:</strong> ", classification, "<br/>",
+      "<strong>Population Served:</strong> ", scales::comma(POPULATION_SERVED_COUNT), "<br/>",
+      "<strong>Population Range:</strong> ", POP_CAT_11_DESC
+    ), HTML)
+  )
+
+# 4. Create palette mapping
+pop_palette <- colorFactor(
+  palette = "YlOrRd", 
+  domain = map_data$POP_CAT_11_CODE
+)
+
+# Get unique classifications to build the interactive layers dynamically
+classifications <- unique(map_data$classification)
+
+# 5. Initialize the leaflet map
+m <- leaflet() %>%
+  addProviderTiles(providers$Esri.WorldTopoMap) %>% 
+  setView(lng = -98.5795, lat = 39.8283, zoom = 4) %>%
+  
+  # Add National Park Boundaries
+  addPolygons(
+    data = nps_boundaries,
+    fillColor = "#2a9d8f",             
+    fillOpacity = 0.15,                
+    color = "#1d3557",                 
+    weight = 1.2,                      
+    popup = ~UNIT_NAME,                
+    group = "Park Boundaries"          
+  )
+
+# 6. Dynamically add a separate marker layer for each classification
+for (cl in classifications) {
+  sub_data <- map_data %>% filter(classification == cl)
+  
+  m <- m %>% addCircleMarkers(
+    data = sub_data,
+    lng = ~source_longitude, 
+    lat = ~source_latitude,
+    radius = 6,                      
+    color = "#4a4a4a",               
+    fillColor = ~pop_palette(POP_CAT_11_CODE), 
+    fillOpacity = 0.8,
+    stroke = TRUE,
+    weight = 0.8,
+    label = ~hover_text,
+    labelOptions = labelOptions(
+      style = list("font-weight" = "normal", padding = "3px 8px"),
+      textsize = "13px",
+      direction = "auto"
+    ),
+    group = cl # Assigns this subset of dots to its own toggle group
+  )
+}
+
+# 7. Add map styling controls and the interactive legend
+m %>%
+  addLegend(
+    pal = pop_palette, 
+    values = map_data$POP_CAT_11_CODE, 
+    opacity = 0.8, 
+    title = "Population Served",
+    labFormat = labelFormat(transform = function(x) pop_labels[as.numeric(x)]),
+    position = "bottomright"
+  ) %>%
+  
+  # Interactive Layer Toggles
+  addLayersControl(
+    overlayGroups = c("Park Boundaries", classifications),
+    options = layersControlOptions(collapsed = FALSE),
+    position = "topright"
+  )
+
+```
+
+# High-Impact Infrastructure: Top 10 Water Systems by Population Served
+
+The table below highlights the ten largest public water systems
+operating within or adjacent to National Park boundaries. Due to the
+scale of human impact, these systems represent the highest priority for
+asset management, infrastructure investment, and water quality
+monitoring
+
+```{r}
+# Extract and clean the top 10 systems
+top_10_systems <- wsd_sdwa %>%
+  filter(!is.na(POPULATION_SERVED_COUNT)) %>%
+  distinct(pws_number, .keep_all = TRUE) %>%
+  arrange(desc(POPULATION_SERVED_COUNT)) %>%
+  slice(1:10) %>%
+  select(
+    `System ID` = pws_number,
+    `System Name` = PWS_NAME,
+    `Park Name` = park_name,
+    `Population Served` = POPULATION_SERVED_COUNT,
+    `Size Class` = POP_CAT_11_DESC
+  )
+
+# Design the Flextable (using the corrected 'j' argument)
+ft <- flextable(top_10_systems) %>%
+  theme_vanilla() %>%
+  # Corrected: changed 'col_keys' to 'j'
+  colformat_double(j = "Population Served", big.mark = ",", digits = 0) %>%
+  bg(bg = "#2a9d8f", part = "header") %>%
+  color(color = "white", part = "header") %>%
+  bold(part = "header") %>%
+  align(align = "center", part = "header") %>%
+  align(j = c("System ID", "Population Served", "Size Class"), align = "center", part = "body") %>%
+  align(j = c("System Name", "Park Name"), align = "left", part = "body") %>%
+  autofit()
+
+# Render the table
+ft
+```
+
+# Human Stressors: Integrating 5-Year Visitor Use Metrics
+
+While understanding a water system's static design population (residents
+and staff) is essential, it only tells half the story. The true
+operational stress on National Park Service (NPS) water infrastructure
+is driven by the millions of recreational tourists who visit these parks
+every year.
+
+To quantify this human stressor, we integrated public water system data
+with official park visitation datasets sourced from the \*\*NPS
+Integrated Resource Management Applications (IRMA) Portal\*\*.
+
+Rather than relying on a single year of visitation data—which is highly
+susceptible to external anomalies like extreme weather events,
+wildfires, road closures, or economic shifts—we designed a more
+resilient metric: a \*\*5-year rolling average (2021–2025) of Total
+Visitors (\`TV\`)\*\*.
+
+------------------------------------------------------------------------
+
+## 🔮 The Analysis to Come: Developing a System Priority Index
+
+With both infrastructural characteristics (population served, water
+source, classification) and dynamic human stressors (5-year average
+visitor footprint) unified in a single dataset, the next phase of this
+project will build a **System Priority Index (SPI)**.
+
+The SPI will serve as a weighted decision-matrix to rank water systems
+according to vulnerability and human impact. This predictive model will
+weight three core dimensions:
+
+**Infrastructural Load:** The localized population served by the
+specific system. **Environmental Exposure:** The physical water source
+(Surface Water vs. Groundwater), assessing vulnerability to direct
+climate risks like droughts and surface contamination. **Systemic
+Pressure:** The rolling 5-year baseline of overall park visitation,
+indicating the system's susceptibility to high-use seasonal spikes.
+
+By mapping this priority index, we aim to provide park managers and
+sustainability teams with an objective, data-driven framework to
+prioritize capital improvements, proactive water testing, and targeted
+infrastructure investments across the national park network.
+
+```{r}
+# 1. Direct URL to the official IRMA Visitor Use Statistics "Main_Data.csv"
+# (This contains historical visitation data up through the most recent calendar year)
+visitation_url <- "https://irma.nps.gov/DataStore/DownloadFile/756959"
+
+# 2. Read the CSV directly from the web
+visitor_data_raw <- read_csv(visitation_url, show_col_types = FALSE)
+
+# 3. Process visitation: Monthly Sums -> Annual Totals -> 5-Year Average
+park_visitation_5yr <- visitor_data_raw %>%
+  # Filter for the last 5 complete years and the "TV" statistic
+  filter(
+    Year >= 2021 & Year <= 2025,
+    Statistic == "TV"
+  ) %>%
+  
+  # Step A: Sum monthly values to get the total annual visitors for each park and year
+  group_by(UnitCode, Year) %>%
+  summarize(
+    Annual_Visits = sum(Value, na.rm = TRUE), 
+    .groups = "drop"
+  ) %>%
+  
+  # Step B: Average those annual totals over the 5-year window
+  group_by(UnitCode) %>%
+  summarize(
+    Avg_Annual_Visits_5Yr = mean(Annual_Visits, na.rm = TRUE),
+    .groups = "drop"
+  ) 
+
+# 4. Merge the datasets
+wsd_with_5yr_visitors <- wsd_sdwa %>%
+  left_join(park_visitation_5yr, by = c("park_unit" = "UnitCode"))
+
+# 5. Save your new master dataset
+write_csv(wsd_with_5yr_visitors, "data/wsd_sdwa_visitors.csv")
+message("Successfully joined 5-year 'TV' averages and saved to data/wsd_sdwa_visitors.csv")
+```
+
+```{r}
+# 2. Prep the main plotting data (remove NAs and zeros)
+viz_data <- wsd_with_5yr_visitors %>%
+  filter(
+    !is.na(POPULATION_SERVED_COUNT), 
+    !is.na(Avg_Annual_Visits_5Yr),
+    POPULATION_SERVED_COUNT > 0,  
+    Avg_Annual_Visits_5Yr > 0      
+  ) %>%
+  distinct(pws_number, .keep_all = TRUE) %>%
+  # Calculate a baseline priority score
+  mutate(Priority_Score = POPULATION_SERVED_COUNT / Avg_Annual_Visits_5Yr)
+
+# 3. Create a tiny subset containing ONLY the top 10 systems for labeling
+# This dramatically reduces ggrepel's calculation load
+label_data <- viz_data %>%
+  arrange(desc(Priority_Score)) %>%
+  slice(1:10)
+
+# 4. Create the Plot
+ggplot(viz_data, aes(x = Avg_Annual_Visits_5Yr, y = POPULATION_SERVED_COUNT)) +
+  geom_point(
+    aes(size = Priority_Score, color = classification), 
+    alpha = 0.6
+  ) +
+  # Log scales
+  scale_x_log10(
+    labels = comma_format(accuracy = 1, scale = 1/1e6, suffix = "M"), 
+    name = "5-Year Average Annual Park Visitation (Log Scale)"
+  ) +
+  scale_y_log10(
+    labels = comma_format(),
+    name = "System Population Served (Log Scale)"
+  ) +
+  # Draw labels (highly simplified)
+  geom_text_repel(
+    data = label_data,
+    aes(label = PWS_NAME),
+    size = 2.8,
+    max.overlaps = 10,
+    color = "#222222",
+    fontface = "bold.italic",
+    box.padding = 0.4,
+    point.padding = 0.3,
+    segment.color = "grey50"
+  ) +
+  # Styling Bubble Size
+  scale_size_continuous(
+    range = c(2, 10), 
+    name = "Priority Score",
+    labels = comma_format()
+  ) +
+  scale_color_brewer(palette = "Set2", name = "Classification") +
+  theme_minimal() +
+  # CRITICAL: Legend fixes to prevent the zero-dimension error
+  theme(
+    text = element_text(color = "#4a4a4a"),
+    axis.title = element_text(face = "bold", size = 11),
+    title = element_text(face = "bold", size = 12),
+    plot.subtitle = element_text(size = 9, face = "italic"),
+    
+    # Move the legend to the bottom and shrink the keys to save space
+    legend.position = "bottom",
+    legend.box = "vertical",
+    legend.title = element_text(face = "bold", size = 8.5),
+    legend.text = element_text(size = 8),
+    legend.spacing.y = unit(0.1, "cm")
+  ) +
+  # Limit the legend rows so it doesn't clip horizontally
+  guides(
+    color = guide_legend(nrow = 2, byrow = TRUE),
+    size = guide_legend(nrow = 1)
+  ) +
+  labs(
+    title = "Multidimensional Priority Mapping: Infrastructure Load vs. System Pressure",
+    subtitle = "Analysis of unique NPS water systems by localized population and 5-year average annual park visitation."
+  )
+```
