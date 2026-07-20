@@ -3,27 +3,21 @@ project:
   output-dir: docs
 
 website:
-  title: "NPS Public Water Systems Analysis"
+  title: "<img src='images/NPS_Logo.png' style='height:38px; vertical-align:middle; margin-right:8px;'> <img src='images/ROSS_Logo_Vertical_White.png' style='height:38px; vertical-align:middle; margin-right:12px;'> <span style='vertical-align:middle;'>NPS Public Water Systems Analysis</span>"
+  
   navbar:
     left:
       - href: NPS_PWS.qmd
         text: Home
-navbar:
-    # First image (Primary Logo on the far left)
-    logo: "images/NPS_Logo.png"
-    logo-alt: "NPS Logo"
-    
-    right:
-      # Second image placed on the far right of the navbar
-      - text: "<img src='images/ROSS logo - Vertical - White.png' alt='Secondary Logo' style='height: 30px; vertical-align: middle;'>"
 
 format:
   html:
     theme: cosmo
+    css: styles.css
     toc: true
     code-fold: true
     code-summary: "Show R Code"
-    
+
 execute:
   warning: false
   message: false
