@@ -8,8 +8,22 @@ website:
     left:
       - href: NPS_PWS.qmd
         text: Home
+navbar:
+    # First image (Primary Logo on the far left)
+    logo: "images/NPS_Logo.png"
+    logo-alt: "NPS Logo"
+    
+    right:
+      # Second image placed on the far right of the navbar
+      - text: "<img src='images/ROSS logo - Vertical - White.png' alt='Secondary Logo' style='height: 30px; vertical-align: middle;'>"
 
 format:
   html:
     theme: cosmo
     toc: true
+    code-fold: true
+    code-summary: "Show R Code"
+    
+execute:
+  warning: false
+  message: false

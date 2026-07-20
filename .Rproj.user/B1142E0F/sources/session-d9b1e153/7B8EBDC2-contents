@@ -1,7 +1,0 @@
-/.quarto/
-/site_libs/
-.Rhistory
-.RData
-.Ruserdata
-# Optional: Ignore raw data if it's over 100MB
-# data/raw_massive_file.csv

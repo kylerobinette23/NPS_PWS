@@ -5,3 +5,6 @@
 .Ruserdata
 # Optional: Ignore raw data if it's over 100MB
 # data/raw_massive_file.csv
+.Rproj.user
+
+**/*.quarto_ipynb
