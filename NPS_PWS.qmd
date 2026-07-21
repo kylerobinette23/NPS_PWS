@@ -18,6 +18,7 @@ library(purrr)
 library(ggplot2)
 library(scales) 
 library(ggrepel)
+library(stringr)
 
 ```
 
@@ -100,7 +101,7 @@ administrative unit name.
 
 ```{r}
 # Load the tabular metadata (if needed for other plots, otherwise loaded here)
-wsd_sdwa <- read_csv("data/wsd_sdwa_clean.csv", show_col_types = FALSE)
+wsd_sdwa <- read_csv("data/wsd_sdwa_updated.csv", show_col_types = FALSE)
 
 # 1. Load your local pre-simplified NPS park boundaries
 nps_boundaries <- sf::st_read("data/nps_boundaries.geojson", quiet = TRUE) %>% 
@@ -117,8 +118,10 @@ pop_labels <- c(
   "250,001-500,000", "500,001-1,000,000", ">1,000,000"
 )
 
+# Define the master map-building function
+build_nps_map <- function(data_input) {
 # 3. Add back the hover text dynamically using your existing 'classification' column
-map_data <- map_data %>%
+map_data <- data_input %>%
   mutate(
     # Re-establish the factor levels so the legend stays in perfect numerical order
     POP_CAT_11_CODE = factor(POP_CAT_11_CODE, levels = as.character(1:11)),
@@ -198,7 +201,9 @@ m %>%
     options = layersControlOptions(collapsed = FALSE),
     position = "topright"
   )
+}
 
+build_nps_map(map_data)
 ```
 
 # High-Impact Infrastructure: Top 10 Water Systems by Population Served
@@ -207,38 +212,79 @@ The table below highlights the ten largest public water systems
 operating within or adjacent to National Park boundaries. Due to the
 scale of human impact, these systems represent the highest priority for
 asset management, infrastructure investment, and water quality
-monitoring
+monitoring. Compare the full network list with the directly managed
+subset to see how operational responsibility shifts across major park
+units.
 
 ```{r}
-# Extract and clean the top 10 systems
-top_10_systems <- wsd_sdwa %>%
-  filter(!is.na(POPULATION_SERVED_COUNT)) %>%
-  distinct(pws_number, .keep_all = TRUE) %>%
-  arrange(desc(POPULATION_SERVED_COUNT)) %>%
-  slice(1:10) %>%
-  select(
-    `System ID` = pws_number,
-    `System Name` = PWS_NAME,
-    `Park Name` = park_name,
-    `Population Served` = POPULATION_SERVED_COUNT,
-    `Size Class` = POP_CAT_11_DESC
-  )
+# Function to generate a formatted Flextable for top N systems
+create_top_systems_table <- function(data_input, n = 10) {
+  
+  # 1. Extract and clean top N systems
+  top_systems <- data_input %>%
+    filter(!is.na(POPULATION_SERVED_COUNT)) %>%
+    distinct(pws_number, .keep_all = TRUE) %>%
+    arrange(desc(POPULATION_SERVED_COUNT)) %>%
+    slice(1:n) %>%
+    select(
+      `System ID` = pws_number,
+      `System Name` = PWS_NAME,
+      `Park Name` = park_name,
+      `Population Served` = POPULATION_SERVED_COUNT,
+      `Size Class` = POP_CAT_11_DESC
+    )
 
-# Design the Flextable (using the corrected 'j' argument)
-ft <- flextable(top_10_systems) %>%
-  theme_vanilla() %>%
-  # Corrected: changed 'col_keys' to 'j'
-  colformat_double(j = "Population Served", big.mark = ",", digits = 0) %>%
-  bg(bg = "#2a9d8f", part = "header") %>%
-  color(color = "white", part = "header") %>%
-  bold(part = "header") %>%
-  align(align = "center", part = "header") %>%
-  align(j = c("System ID", "Population Served", "Size Class"), align = "center", part = "body") %>%
-  align(j = c("System Name", "Park Name"), align = "left", part = "body") %>%
-  autofit()
+  # 2. Design and return the Flextable
+  flextable(top_systems) %>%
+    theme_vanilla() %>%
+    colformat_double(j = "Population Served", big.mark = ",", digits = 0) %>%
+    bg(bg = "#2a9d8f", part = "header") %>%
+    color(color = "white", part = "header") %>%
+    bold(part = "header") %>%
+    align(align = "center", part = "header") %>%
+    align(j = c("System ID", "Population Served", "Size Class"), align = "center", part = "body") %>%
+    align(j = c("System Name", "Park Name"), align = "left", part = "body") %>%
+    autofit()
+}
 
-# Render the table
-ft
+create_top_systems_table(wsd_sdwa)
+```
+
+::: {.callout-note appearance="simple"}
+### Why Filter by Source Type?
+
+The complete dataset includes every water system located within or
+adjacent to park lands. However, a significant portion of these are
+**municipal, hauled, or tribally owned systems**.
+
+While these third-party connections are vital for park operations, their
+primary maintenance, compliance, and capital investment responsibilities
+rest with external utilities. **Directly managed NPS systems**, on the
+other hand, represent assets where park staff hold 100% of the
+operational risk, maintenance burden, and regulatory oversight under the
+Safe Drinking Water Act (SDWA). Isolating these systems allows asset
+managers to focus on infrastructure directly funded and maintained by
+the agency.
+:::
+
+```{r}
+# Filter dataset
+map_data_nps_only <- map_data %>%
+  filter(!str_detect(source_type, regex("municipal|hauled|tribal", ignore_case = TRUE)) | is.na(source_type))
+
+# Render Map 2 (NPS Managed Only)
+build_nps_map(map_data_nps_only)
+```
+
+### Top 10 NPS Managed Water Systems By Population Served
+
+```{r}
+# Filter tabular dataset using explicit stringr namespace
+wsd_sdwa_nps_only <- wsd_sdwa %>%
+  filter(!stringr::str_detect(source_type, regex("municipal|hauled|tribal", ignore_case = TRUE)) | is.na(source_type))
+
+# Render filtered table
+create_top_systems_table(wsd_sdwa_nps_only)
 ```
 
 # Human Stressors: Integrating 5-Year Visitor Use Metrics
@@ -253,9 +299,9 @@ To quantify this human stressor, we integrated public water system data
 with official park visitation datasets sourced from the \*\*NPS
 Integrated Resource Management Applications (IRMA) Portal\*\*.
 
-Rather than relying on a single year of visitation data—which is highly
+Rather than relying on a single year of visitation data, which is highly
 susceptible to external anomalies like extreme weather events,
-wildfires, road closures, or economic shifts—we designed a more
+wildfires, road closures, or economic shifts, we designed a more
 resilient metric: a \*\*5-year rolling average (2021–2025) of Total
 Visitors (\`TV\`)\*\*.
 
@@ -315,7 +361,7 @@ park_visitation_5yr <- visitor_data_raw %>%
   ) 
 
 # 4. Merge the datasets
-wsd_with_5yr_visitors <- wsd_sdwa %>%
+wsd_with_5yr_visitors <- wsd_sdwa_nps_only %>%
   left_join(park_visitation_5yr, by = c("park_unit" = "UnitCode"))
 
 # 5. Save your new master dataset
@@ -400,4 +446,141 @@ ggplot(viz_data, aes(x = Avg_Annual_Visits_5Yr, y = POPULATION_SERVED_COUNT)) +
     title = "Multidimensional Priority Mapping: Infrastructure Load vs. System Pressure",
     subtitle = "Analysis of unique NPS water systems by localized population and 5-year average annual park visitation."
   )
+```
+
+## Methodological Refinement: Allocating Park Visitation to Individual Water Systems
+
+When evaluating public health exposure and infrastructure stress across
+national parks, relying solely on **total park-level visitation** can
+distort risk assessments. Large, multi-use park units—such as Grand
+Canyon, Yellowstone, or Yosemite—host millions of annual visitors
+distributed across dozens of geographically isolated water systems.
+
+Assigning a park's total visitor count to every water asset within its
+boundaries would severely over-penalize small, low-capacity systems
+(e.g., remote trailhead well systems or backcountry housing units)
+simply because they reside within a high-traffic park. Conversely, it
+underrepresents the true relative burden placed on major utility hubs
+that serve primary lodge and visitor center complexes.
+
+To resolve this imbalance, we implement a **Weighted Capacity Allocation
+Model** to estimate the true **System-Allocated Visitor Footprint**.
+
+------------------------------------------------------------------------
+
+### 🧮 Mathematical Framework
+
+To distribute park-level visitor traffic across individual assets
+proportional to their designed supply responsibility, we calculate a
+system's capacity ratio relative to the total NPS-managed infrastructure
+capacity within that park unit:
+
+1.  <u style="text-decoration-thickness: 1px; text-underline-offset: 3px;">**Park
+    Infrastructure Capacity (**$\text{Pop}_{\text{park}}$):</u> We
+    aggregate the Safe Drinking Water Act (SDWA) population served
+    across all *directly managed* NPS water systems within a single park
+    unit:
+
+$$\text{Pop}_{\text{park}} = \sum_{i=1}^{n} \text{Pop}_{\text{system}_i}$$
+
+2.  <u style="text-decoration-thickness: 1px; text-underline-offset: 3px;">**System
+    Capacity Share (**$W_{\text{system}}$):</u> We establish the
+    proportional capacity weight ($W$) for each system:
+
+$$W_{\text{system}} = \frac{\text{Pop}_{\text{system}}}{\text{Pop}_{\text{park}}}$$
+
+3.  <u style="text-decoration-thickness: 1px; text-underline-offset: 3px;">**Allocated
+    Annual Visitors (**$\text{Vis}_{\text{allocated}}$):</u> We apply
+    this capacity weighting factor to the park's 5-year average annual
+    visitation ($\text{Vis}_{\text{park}}$):
+
+$$\text{Vis}_{\text{allocated}} = W_{\text{system}} \times \text{Vis}_{\text{park}}$$
+
+------------------------------------------------------------------------
+
+### 🎯 Key Assumptions & Operational Context
+
+-   **Design Capacity as a Demand Proxy:** In SDWA reporting,
+    `POPULATION_SERVED_COUNT` reflects peak design capacity or overnight
+    service bounds. Using this value to weight visitor demand assumes
+    that infrastructure investment naturally scales with human foot
+    traffic across park sub-districts.
+-   **Granular Risk Scoring:** By shifting from raw park totals to
+    `Vis_allocated`, our **System Priority Index (SPI)** accurately
+    scores **Systemic Pressure** at the individual asset level. This
+    ensures capital improvement recommendations target systems
+    experiencing genuine high-volume operational fatigue
+
+```{r}
+system_visitor_allocation <- wsd_with_5yr_visitors %>%
+  # Ensure population and visitation numbers are numeric and non-NA
+  mutate(
+    POPULATION_SERVED_COUNT = coalesce(POPULATION_SERVED_COUNT, 0),
+    Avg_Annual_Visits_5Yr   = coalesce(Avg_Annual_Visits_5Yr, 0)
+  ) %>%
+  
+  # Group by Park to calculate total park-level infrastructure capacity
+  group_by(park_name) %>%
+  mutate(
+    park_total_pop_served = sum(POPULATION_SERVED_COUNT, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  
+  # Calculate System Ratio & Allocated Visitor Footprint
+  mutate(
+    # Ratio of system capacity to overall park water capacity
+    # (Avoid division by zero if a park has 0 recorded population)
+    system_pop_ratio = if_else(
+      park_total_pop_served > 0, 
+      POPULATION_SERVED_COUNT / park_total_pop_served, 
+      0
+    ),
+    
+    # Fraction of park visitors allocated to this specific system
+    system_allocated_visitors = round(system_pop_ratio * Avg_Annual_Visits_5Yr, 0)
+  )
+# 2. Extract and format the Top 10 systems by allocated visitors
+top_10_allocated <- system_visitor_allocation %>%
+  filter(!is.na(pws_number)) %>%
+  distinct(pws_number, .keep_all = TRUE) %>%
+  arrange(desc(system_allocated_visitors)) %>%
+  slice(1:10) %>%
+  mutate(
+    # Multiply by 100 so 0.25 becomes 25.0
+    system_pop_ratio = system_pop_ratio * 100
+  ) %>%
+  select(
+    `System ID`                = pws_number,
+    `System Name`              = PWS_NAME,
+    `Park Name`                = park_name,
+    `System Capacity Share`    = system_pop_ratio,
+    `Total Park Visitors`      = Avg_Annual_Visits_5Yr,
+    `Allocated Visitor Load`   = system_allocated_visitors
+  )
+# 3. Design the Flextable
+ft_allocated <- flextable(top_10_allocated) %>%
+  theme_vanilla() %>%
+  
+  # Format percentages (now scaled) and big numbers cleanly
+  colformat_double(j = "System Capacity Share", digits = 1, suffix = "%") %>%
+  colformat_double(j = c("Total Park Visitors", "Allocated Visitor Load"), big.mark = ",", digits = 0) %>%
+  
+  # Header Styling
+  bg(bg = "#2a9d8f", part = "header") %>%
+  color(color = "white", part = "header") %>%
+  bold(part = "header") %>%
+  align(align = "center", part = "header") %>%
+  
+  # Body Alignment
+  align(j = c("System ID", "System Capacity Share", "Total Park Visitors", "Allocated Visitor Load"), align = "center", part = "body") %>%
+  align(j = c("System Name", "Park Name"), align = "left", part = "body") %>%
+  
+  # Highlight the key output column with a light background
+  bg(j = "Allocated Visitor Load", bg = "#f4f9f8", part = "body") %>%
+  bold(j = "Allocated Visitor Load", part = "body") %>%
+  
+  autofit()
+
+# Render table
+ft_allocated
 ```
