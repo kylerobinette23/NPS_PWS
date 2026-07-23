@@ -16,6 +16,7 @@ library(sf)
 library(flextable)
 library(purrr)
 library(ggplot2)
+library(plotly)
 library(scales) 
 library(ggrepel)
 library(stringr)
@@ -84,8 +85,8 @@ infiltration (like PFAS).
 ### 3. Historical Compliance & Risk (SDWA Violations)
 
 By analyzing historical violations, we can highlight systems with a
-track record of compliance issues—particularly those sensitive to
-climate stressors—providing park managers with a data-driven "early
+track record of compliance issues, particularly those sensitive to
+climate stressors, providing park managers with a data-driven "early
 warning" system.
 
 ------------------------------------------------------------------------
@@ -98,6 +99,12 @@ park boundaries and water system classifications. **Hover** over any
 point to view the system name, exact population served, and size
 classification. **Click** on any park boundary to identify the official
 administrative unit name.
+
+U.S. Environmental Protection Agency’s (EPA) Safe Drinking Water
+Information System (SDWIS) data downloaded from:
+<https://echo.epa.gov/tools/data-downloads#drinkingwater>
+(SDWA_PUB_WATER_SYSTEMS.csv) and joined with WSD using unique Public
+Water System Identification numbers.
 
 ```{r}
 # Load the tabular metadata (if needed for other plots, otherwise loaded here)
@@ -296,14 +303,14 @@ is driven by the millions of recreational tourists who visit these parks
 every year.
 
 To quantify this human stressor, we integrated public water system data
-with official park visitation datasets sourced from the \*\*NPS
-Integrated Resource Management Applications (IRMA) Portal\*\*.
+with official park visitation datasets sourced from the **NPS Integrated
+Resource Management Applications (IRMA) Portal**.
 
 Rather than relying on a single year of visitation data, which is highly
 susceptible to external anomalies like extreme weather events,
 wildfires, road closures, or economic shifts, we designed a more
-resilient metric: a \*\*5-year rolling average (2021–2025) of Total
-Visitors (\`TV\`)\*\*.
+resilient metric: a **5-year rolling average (2021–2025) of Total
+Visitors (\`TV\`)**.
 
 ------------------------------------------------------------------------
 
@@ -452,8 +459,8 @@ ggplot(viz_data, aes(x = Avg_Annual_Visits_5Yr, y = POPULATION_SERVED_COUNT)) +
 
 When evaluating public health exposure and infrastructure stress across
 national parks, relying solely on **total park-level visitation** can
-distort risk assessments. Large, multi-use park units—such as Grand
-Canyon, Yellowstone, or Yosemite—host millions of annual visitors
+distort risk assessments. Large, multi-use park units, such as Grand
+Canyon, Yellowstone, or Yosemite, host millions of annual visitors
 distributed across dozens of geographically isolated water systems.
 
 Assigning a park's total visitor count to every water asset within its
@@ -583,4 +590,69 @@ ft_allocated <- flextable(top_10_allocated) %>%
 
 # Render table
 ft_allocated
+```
+
+**Reading the System Capacity Share Plot:**
+
+-   **Bar Length (Total Park Load):** The total length of each
+    horizontal bar represents the park’s overall 5-year average annual
+    visitation.
+
+-   **Color Segments (Individual Systems):** Each distinct colored
+    segment within a bar corresponds to an individual public water
+    system operating within that park unit. The width of a segment
+    reflects its **capacity share ratio**—the proportion of total park
+    water capacity managed by that specific system.
+
+    -   **Solid, single-color bars** indicate parks reliant on a
+        **centralized water system** carrying 100% of the operational
+        footprint (high single-point failure risk).
+
+    -   **Multi-segmented bars** indicate a **decentralized network** of
+        smaller systems sharing total park visitor demand (distributed
+        operational risk).
+
+-   **Interactive Exploration:** Hover over any colored segment to
+    inspect the exact system name, its percentage capacity share, and
+    its calculated **Allocated Annual Visitor Load**.
+
+```{r}
+# 1. Extract the unique park names directly from your Top 10 table
+# Note: Uses `Park Name` if extracted after select(), or `park_name` if extracted before select()
+target_parks <- unique(top_10_allocated$`Park Name`)
+
+# 2. Filter system_visitor_allocation for systems within those target parks
+plot_data <- system_visitor_allocation %>%
+  filter(park_name %in% target_parks) %>%
+  mutate(
+    # Fallback hierarchy: PWS_NAME -> water_system_name -> pws_number -> Unregistered
+    clean_system_name = coalesce(PWS_NAME, water_system_name, pws_number, "Unregistered System")
+  )
+
+# 3. Build plot matching the top 10 table
+top_parks_plot <- ggplot(plot_data, aes(
+  x = reorder(park_name, Avg_Annual_Visits_5Yr), 
+  y = system_allocated_visitors, 
+  fill = clean_system_name,
+  text = paste0("<b>Park:</b> ", park_name, "<br>",
+                "<b>System:</b> ", clean_system_name, "<br>",
+                "<b>Share:</b> ", round(system_pop_ratio * 100, 1), "%<br>",
+                "<b>Allocated Visitors:</b> ", scales::comma(system_allocated_visitors))
+)) +
+  geom_col(position = "stack", color = "white", linewidth = 0.2) +
+  coord_flip() +
+  scale_y_continuous(labels = scales::label_comma()) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold", size = 14)
+  ) +
+  labs(
+    title = "System Capacity Share Across Top 10 Parks",
+    x = NULL,
+    y = "Allocated Annual Visitors"
+  )
+
+# 4. Render interactive plot
+ggplotly(top_parks_plot, tooltip = "text") 
 ```
